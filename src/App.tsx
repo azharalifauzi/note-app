@@ -20,15 +20,15 @@ const BlockParser: React.FC<Block> = ({ type, content, style = [] }) => {
   const boxProps: BoxProps = {};
 
   if (type === 'heading') {
-    boxProps.fontSize = 'xl';
+    boxProps.fontSize = '32px';
   }
 
   if (type === 'subheading') {
-    boxProps.fontSize = 'lg';
+    boxProps.fontSize = '24px';
   }
 
   if (type === 'circle-list') {
-    boxProps.listStyleType = 'circle';
+    boxProps.listStyleType = 'initial';
     boxProps.as = 'li';
   }
 
@@ -101,7 +101,9 @@ function App() {
       if (selection && node) {
         switch (editEvent) {
           case 'type':
-            selection.setPosition(node, startOffset + 1);
+            if (index === endIndex && startOffset !== endOffset)
+              selection.setPosition(node, Math.min(startOffset, endOffset) + 1);
+            else selection.setPosition(node, startOffset + 1);
             break;
           case 'modify-style':
           case 'delete-forward':
@@ -146,16 +148,21 @@ function App() {
   function getPosition() {
     const select = window.getSelection();
 
-    if (select && select.anchorNode) {
+    if (select && select.anchorNode && select.focusNode) {
       const position = findCaretPosition(select.anchorNode);
-      setStartOffset(select.anchorOffset);
-      setIndex(position);
-    }
-
-    if (select && select.focusNode) {
       const endPosition = findCaretPosition(select.focusNode);
-      setEndOffset(select.focusOffset);
-      setEndIndex(endPosition);
+
+      if (position > endPosition) {
+        setIndex(endPosition);
+        setEndIndex(position);
+        setStartOffset(select.focusOffset);
+        setEndOffset(select.anchorOffset);
+      } else {
+        setIndex(position);
+        setEndIndex(endPosition);
+        setStartOffset(select.anchorOffset);
+        setEndOffset(select.focusOffset);
+      }
     }
   }
 
@@ -167,41 +174,66 @@ function App() {
     const isEnter = data === '\n' || data === '\r';
 
     if (selection && selection.anchorNode) {
-      let position = findCaretPosition(selection.anchorNode);
-      let offset = selection.anchorOffset;
-      // const { textContent } = e.currentTarget.childNodes[position];
-      const childNodesLength = noteRef.current?.childNodes.length;
+      let position = index;
+      let offset = startOffset;
 
       if (isEnter) {
         setEditEvent('enter');
-        position++;
-        offset = -1;
       } else {
         setEditEvent('type');
       }
 
       const newBlocks = produce(blocks, (draft) => {
         if (isEnter) {
-          if (!draft[position - 1]) {
-            draft[position - 1] = { type: 'body', content: '' };
+          if (!draft[position]) {
+            draft[position] = { type: 'body', content: '' };
           }
 
-          const currentContent = draft[position - 1].content;
+          const currentContent = draft[position].content;
 
-          let newContent = currentContent.substring(selection.anchorOffset);
+          let newContent = currentContent.substring(offset);
 
           if (!newContent) {
             newContent = '';
           }
 
-          draft[position - 1].content =
-            currentContent.substring(0, selection.anchorOffset) || '';
+          draft[position].content = currentContent.substring(0, offset) || '';
 
-          draft.splice(position, 0, {
+          draft.splice(position + 1, 0, {
             type: 'body',
             content: newContent
           });
 
+          return;
+        }
+
+        if (index !== endIndex) {
+          if (draft[endIndex].content.length === endOffset) {
+            draft.splice(endIndex, 1);
+            draft[index].content =
+              draft[index].content.substring(0, startOffset) + data;
+          } else {
+            draft[index].content =
+              draft[index].content.substring(0, startOffset) +
+              data +
+              draft[endIndex].content.substring(endOffset);
+            draft.splice(endIndex, 1);
+          }
+
+          // delete block between start and end position
+          draft.splice(index + 1, endIndex - index - 1);
+
+          return;
+        }
+
+        if (index === endIndex && startOffset !== endOffset) {
+          draft[index].content =
+            draft[index].content.substring(
+              0,
+              Math.min(startOffset, endOffset)
+            ) +
+            data +
+            draft[index].content.substring(Math.max(startOffset, endOffset));
           return;
         }
 
@@ -211,19 +243,14 @@ function App() {
             content: ''
           };
         }
-        const currentContent = draft[position].content;
 
+        const currentContent = draft[position].content;
         const newContent =
           currentContent.substring(0, offset) +
           data +
           currentContent.substring(offset);
 
         draft[position].content = newContent;
-
-        // delete unused block
-        // if (childNodesLength) {
-        //   draft.splice(childNodesLength, draft.length - childNodesLength);
-        // }
       });
 
       setBlocks(newBlocks);
@@ -301,6 +328,28 @@ function App() {
     }
   };
 
+  const handleChangeStyle = (style: string) => {
+    setEditEvent('modify-style');
+    setBlocks(
+      produce(blocks, (draft) => {
+        const currentBlock = draft[index];
+
+        if (!currentBlock.style) {
+          currentBlock.style = [];
+        }
+
+        if (currentBlock.style.includes(style)) {
+          const index = currentBlock.style.findIndex((val) => val === style);
+          currentBlock.style.splice(index, 1);
+          return;
+        }
+        currentBlock.style?.push(style);
+      })
+    );
+
+    noteRef.current?.focus();
+  };
+
   return (
     <>
       <Flex alignItems="center" px="6" py="4" gap="6">
@@ -308,19 +357,35 @@ function App() {
           onChange={handleChange}
           maxW="400px"
           value={blocks[index]?.type}
+          defaultValue="body"
         >
           <option value="heading">Heading</option>
           <option value="subheading">Sub Heading</option>
           <option value="body">Body</option>
           <option value="circle-list">- Circle List</option>
         </Select>
-        <chakra.button w="8" h="8" border="1px solid black">
+        <chakra.button
+          onClick={() => handleChangeStyle('bold')}
+          w="8"
+          h="8"
+          border="1px solid black"
+        >
           B
         </chakra.button>
-        <chakra.button w="8" h="8" border="1px solid black">
+        <chakra.button
+          onClick={() => handleChangeStyle('italic')}
+          w="8"
+          h="8"
+          border="1px solid black"
+        >
           I
         </chakra.button>
-        <chakra.button w="8" h="8" border="1px solid black">
+        <chakra.button
+          onClick={() => handleChangeStyle('underline')}
+          w="8"
+          h="8"
+          border="1px solid black"
+        >
           U
         </chakra.button>
       </Flex>
@@ -338,11 +403,11 @@ function App() {
         id="note"
         dangerouslySetInnerHTML={{
           __html: renderToString(
-            <ChakraProvider>
+            <>
               {blocks.map((props, i) => (
                 <BlockParser key={`block-${props.content}-${i}`} {...props} />
               ))}
-            </ChakraProvider>
+            </>
           )
         }}
       ></Box>
